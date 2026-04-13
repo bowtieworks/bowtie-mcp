@@ -400,6 +400,307 @@ async def list_route_exclusions() -> ToolResult:
 
 
 # ======================================================================
+# Log Query Tools
+# ======================================================================
+
+
+async def _check_verdict_logging_status() -> dict:
+    """Check which controllers have verdict logging enabled.
+    Returns a summary with controller names and their logging status."""
+    controllers = await _get_client().list_controllers()
+    status = []
+    for c in controllers:
+        status.append({
+            "id": c.get("id"),
+            "public_address": c.get("public_address", c.get("https_endpoint", "unknown")),
+            "track_policy_verdict_logs": c.get("track_policy_verdict_logs", False),
+            "track_policy_verdict_metrics": c.get("track_policy_verdict_metrics", False),
+            "status": c.get("status"),
+        })
+    enabled = sum(1 for s in status if s["track_policy_verdict_logs"])
+    return {
+        "total_controllers": len(status),
+        "logging_enabled_count": enabled,
+        "controllers": status,
+    }
+
+
+@app.tool()
+async def get_verdict_logging_status() -> str:
+    """Check which controllers have policy verdict logging enabled.
+    Verdict logging must be enabled per-controller before verdict logs
+    will appear in queries. Returns the status of each controller.
+
+    If logging is not enabled, the admin needs to enable
+    track_policy_verdict_logs on each controller via the Bowtie UI
+    or API before traffic analysis tools will return data."""
+    try:
+        return _ok(await _check_verdict_logging_status())
+    except Exception as e:
+        return _error("get_verdict_logging_status", e)
+
+
+def _parse_loki_streams(result: dict) -> list[dict]:
+    """Extract log entries from Loki query_range response into a flat list."""
+    entries = []
+    data = result.get("data", {})
+    for stream in data.get("result", []):
+        labels = stream.get("stream", {})
+        for ts, line in stream.get("values", []):
+            entry = {"timestamp": ts, "labels": labels, "line": line}
+            entries.append(entry)
+    return entries
+
+
+def _parse_verdict_line(line: str) -> dict:
+    """Parse an OTLP logfmt verdict log line into a structured dict.
+
+    Log lines from Loki have fields prefixed with 'attribute_' (via OTLP
+    collector). This strips the prefix and normalizes the keys.
+    """
+    fields = {}
+    import shlex
+    try:
+        parts = shlex.split(line)
+    except ValueError:
+        parts = line.split()
+    for part in parts:
+        if "=" in part:
+            key, _, value = part.partition("=")
+            # Strip the OTLP attribute_ prefix
+            if key.startswith("attribute_"):
+                key = key[len("attribute_"):]
+            # Skip telemetry/instrumentation noise
+            if key.startswith("resource_") or key.startswith("instrumentation_"):
+                continue
+            # Clean up null values
+            if value in ('"null"', "null"):
+                value = None
+            fields[key] = value
+    return fields
+
+
+@app.tool()
+async def query_verdict_logs(
+    start: str,
+    end: str,
+    device_id: str | None = None,
+    user_id: str | None = None,
+    verdict: str | None = None,
+    destination: str | None = None,
+    protocol: str | None = None,
+    limit: int = 500,
+) -> str:
+    """Query policy verdict logs over a time range. Returns raw firewall decisions
+    showing what traffic was accepted, rejected, or dropped and why.
+
+    Requires track_policy_verdict_logs to be enabled on the controller.
+
+    Args:
+        start: Start time — RFC3339 (e.g., "2026-04-06T00:00:00Z") or relative (e.g., "7d" for 7 days ago).
+        end: End time — RFC3339 or "now".
+        device_id: Filter to a specific device UUID.
+        user_id: Filter to a specific user UUID.
+        verdict: Filter by verdict: "Accept", "Reject", or "Drop".
+        destination: Filter by destination IP or CIDR substring.
+        protocol: Filter by protocol: "tcp", "udp", "icmp".
+        limit: Max entries to return (default 500).
+    """
+    # Convert relative times to RFC3339
+    import time
+    now = time.time()
+    if end == "now":
+        end_ts = f"{int(now)}000000000"
+    else:
+        end_ts = end
+    if start.endswith("d"):
+        days = int(start[:-1])
+        start_ts = f"{int(now - days * 86400)}000000000"
+    elif start.endswith("h"):
+        hours = int(start[:-1])
+        start_ts = f"{int(now - hours * 3600)}000000000"
+    else:
+        start_ts = start
+
+    try:
+        result = await _get_client().query_verdict_logs(
+            start_ts,
+            end_ts,
+            device_id=device_id,
+            user_id=user_id,
+            verdict=verdict,
+            destination=destination,
+            protocol=protocol,
+            limit=limit,
+        )
+        entries = _parse_loki_streams(result)
+        return _ok({"count": len(entries), "entries": entries})
+    except Exception as e:
+        return _error("query_verdict_logs", e)
+
+
+@app.tool()
+async def get_verdict_summary(
+    start: str,
+    end: str,
+    limit: int = 5000,
+) -> str:
+    """Get an aggregated summary of policy verdicts over a time range.
+    Groups traffic by destination, verdict, device, and user to identify patterns.
+
+    Use this to understand traffic flows before creating or modifying policies.
+    Particularly useful for finding:
+    - Frequently dropped traffic that may need a new Allow policy
+    - Overly broad Accept rules that could be tightened
+    - Unusual traffic patterns from specific devices
+
+    Args:
+        start: Start time — RFC3339 or relative (e.g., "7d", "24h").
+        end: End time — RFC3339 or "now".
+        limit: Max raw entries to analyze (default 5000).
+    """
+    import time
+    from collections import Counter
+
+    now = time.time()
+    if end == "now":
+        end_ts = f"{int(now)}000000000"
+    else:
+        end_ts = end
+    if start.endswith("d"):
+        days = int(start[:-1])
+        start_ts = f"{int(now - days * 86400)}000000000"
+    elif start.endswith("h"):
+        hours = int(start[:-1])
+        start_ts = f"{int(now - hours * 3600)}000000000"
+    else:
+        start_ts = start
+
+    try:
+        # Check logging status to warn about gaps
+        logging_status = await _check_verdict_logging_status()
+
+        result = await _get_client().query_verdict_logs(
+            start_ts, end_ts, limit=limit
+        )
+        entries = _parse_loki_streams(result)
+
+        # Parse and aggregate
+        by_verdict: Counter = Counter()
+        by_dest: Counter = Counter()
+        by_device: Counter = Counter()
+        by_user: Counter = Counter()
+        dropped_flows: Counter = Counter()
+        accepted_flows: Counter = Counter()
+
+        for entry in entries:
+            fields = _parse_verdict_line(entry.get("line", ""))
+            v = fields.get("verdict", "unknown")
+            dest = fields.get("destination_address", "unknown")
+            dest_port = fields.get("destination_port", "")
+            device = fields.get("device_name", fields.get("device_id", "unknown"))
+            user = fields.get("user_id", "unknown")
+            proto = fields.get("protocol", "")
+
+            by_verdict[v] += 1
+            by_dest[f"{dest}:{dest_port}/{proto}"] += 1
+            by_device[device] += 1
+            by_user[user] += 1
+
+            flow_key = f"{dest}:{dest_port}/{proto}"
+            if v in ("Reject", "Drop"):
+                dropped_flows[flow_key] += 1
+            elif v == "Accept":
+                accepted_flows[flow_key] += 1
+
+        summary: dict[str, Any] = {
+            "total_entries": len(entries),
+            "by_verdict": dict(by_verdict.most_common()),
+            "top_destinations": dict(by_dest.most_common(20)),
+            "top_devices": dict(by_device.most_common(20)),
+            "top_users": dict(by_user.most_common(20)),
+            "top_dropped_flows": dict(dropped_flows.most_common(20)),
+            "top_accepted_flows": dict(accepted_flows.most_common(20)),
+        }
+
+        # Add logging status warnings
+        total = logging_status["total_controllers"]
+        enabled = logging_status["logging_enabled_count"]
+        if enabled == 0:
+            summary["warning"] = (
+                f"Policy verdict logging is not enabled on any of your {total} controller(s). "
+                "No verdict data will be available. Enable track_policy_verdict_logs on each "
+                "controller to start collecting traffic data."
+            )
+        elif enabled < total:
+            disabled_controllers = [
+                c["public_address"]
+                for c in logging_status["controllers"]
+                if not c["track_policy_verdict_logs"]
+            ]
+            summary["warning"] = (
+                f"Policy verdict logging is only enabled on {enabled} of {total} controller(s). "
+                f"Traffic through these controllers is not included: {', '.join(disabled_controllers)}. "
+                "Enable track_policy_verdict_logs on all controllers for complete coverage."
+            )
+
+        return _ok(summary)
+    except Exception as e:
+        return _error("get_verdict_summary", e)
+
+
+@app.tool()
+async def query_dns_logs(
+    start: str,
+    end: str,
+    domain: str | None = None,
+    device_id: str | None = None,
+    category: str | None = None,
+    limit: int = 500,
+) -> str:
+    """Query DNS block/audit logs over a time range. Shows DNS queries that were
+    blocked by threat categories or block lists, including the domain, category,
+    and which device/user triggered it.
+
+    Args:
+        start: Start time — RFC3339 or relative (e.g., "7d", "24h").
+        end: End time — RFC3339 or "now".
+        domain: Filter by domain name substring.
+        device_id: Filter to a specific device UUID.
+        category: Filter by threat category (e.g., "malware/callhome").
+        limit: Max entries to return (default 500).
+    """
+    import time
+    now = time.time()
+    if end == "now":
+        end_ts = f"{int(now)}000000000"
+    else:
+        end_ts = end
+    if start.endswith("d"):
+        days = int(start[:-1])
+        start_ts = f"{int(now - days * 86400)}000000000"
+    elif start.endswith("h"):
+        hours = int(start[:-1])
+        start_ts = f"{int(now - hours * 3600)}000000000"
+    else:
+        start_ts = start
+
+    try:
+        result = await _get_client().query_dns_logs(
+            start_ts,
+            end_ts,
+            domain=domain,
+            device_id=device_id,
+            category=category,
+            limit=limit,
+        )
+        entries = _parse_loki_streams(result)
+        return _ok({"count": len(entries), "entries": entries})
+    except Exception as e:
+        return _error("query_dns_logs", e)
+
+
+# ======================================================================
 # Write Tools (require confirmation)
 # ======================================================================
 
@@ -1421,4 +1722,57 @@ def review_pending_devices() -> str:
 4. Use change_device_state to batch-process the decisions.
    Call with confirm=false first to preview, then confirm=true to execute.
 5. After processing, show a summary of what changed.
+"""
+
+
+@app.prompt()
+def analyze_traffic(time_range: str = "7d") -> str:
+    """Analyze policy verdict logs to recommend new or improved policies.
+    Identifies dropped traffic that may need Allow policies, overly broad
+    rules that could be tightened, and unusual traffic patterns."""
+    return f"""You are analyzing network traffic patterns to recommend policy changes for a Bowtie cluster.
+
+IMPORTANT guidelines:
+- Only recommend changes that are directly supported by the traffic data. Do not suggest general security hygiene, resource cleanup, or posture improvements unless the admin specifically asks.
+- Broad policies (like "Always → Accept all") are common and expected, especially in early or growing deployments. Frame tightening suggestions as opportunities, not problems. Never imply the admin's configuration is wrong.
+- Keep recommendations strictly traffic-derived. If you notice something interesting that isn't actionable from traffic data alone, leave it out.
+
+Follow these steps:
+
+1. **Check logging status**: Call get_verdict_logging_status to verify which controllers have
+   policy verdict logging enabled. If none do, stop and tell the admin they need to enable
+   track_policy_verdict_logs on their controllers first. If only some have it enabled, note
+   which controllers are missing coverage so the admin understands the data may be incomplete.
+
+2. **Pull verdict summary**: Call get_verdict_summary with start="{time_range}" and end="now".
+   This gives you aggregated traffic data: top destinations, dropped flows, accepted flows, per-device and per-user breakdowns.
+
+3. **Pull current policies**: Call get_policy to get the full policy document (resources, resource groups, policies).
+
+4. **Pull group context**: Call list_user_groups and list_devices (or specific device groups) to understand the organizational structure.
+
+5. **Analyze dropped traffic** (most actionable):
+   - Look at top_dropped_flows — these are destinations that devices are trying to reach but being denied.
+   - For each significant dropped flow, determine:
+     - Which devices/users are generating this traffic?
+     - Is this legitimate business traffic that needs an Allow policy?
+     - What resource, resource group, and policy would need to be created?
+   - If you need more detail on a specific flow, call query_verdict_logs with filters to drill down.
+
+6. **Analyze accepted traffic** (tightening opportunities):
+   - Look for Accept policies with broad sources (predicate "Always") or broad destinations (0.0.0.0/0, large CIDRs).
+   - Cross-reference with actual traffic: is the broad policy only being matched by traffic to a narrow set of destinations?
+   - If the traffic shows the broad policy could be replaced with a few specific rules covering the same flows, suggest it as an option — not a requirement.
+
+7. **Present recommendations** as a prioritized list:
+   - **High priority**: Legitimate traffic being dropped (blocking business operations)
+   - **Medium priority**: Broad policies that could be scoped down based on observed traffic patterns
+   - **Low priority**: Traffic patterns worth noting (e.g., devices with no user assignment that will need policies if a broad rule is removed)
+
+   For each recommendation, include:
+   - What the traffic data shows (specific flows, counts, devices involved)
+   - The specific policy change to make (source predicate, destination, action)
+   - How to implement it using the available tools (upsert_resource, upsert_resource_group, upsert_policy)
+
+8. **Ask the admin** which recommendations they'd like to implement, then execute using the write tools with the confirmation pattern.
 """

@@ -249,3 +249,102 @@ class TestDnsTools:
         assert call_data["strategy_resolver"] == "exclusive"
         assert call_data["is_log"] is True
         assert len(call_data["servers"]) == 2
+
+
+class TestLogQueryTools:
+    LOKI_RESPONSE = {
+        "status": "success",
+        "data": {
+            "resultType": "streams",
+            "result": [
+                {
+                    "stream": {"audit_type": "packet_queue", "service_name": "bowtie_server"},
+                    "values": [
+                        [
+                            "1712700000000000000",
+                            'severity=INFO attribute_audit_event=true attribute_protocol=tcp attribute_source_address=10.0.1.5 attribute_source_port=54321 attribute_destination_address=10.0.5.10 attribute_destination_port=443 attribute_destination_nat64="null" attribute_device_id=d1 attribute_device_name=laptop1 attribute_user_id=u1 attribute_verdict=Drop attribute_reason=DropAllAfterPolicyEvaluation resource_telemetry.sdk.language=rust instrumentation_scope_name=audit',
+                        ],
+                        [
+                            "1712700001000000000",
+                            'severity=INFO attribute_audit_event=true attribute_protocol=tcp attribute_source_address=10.0.1.5 attribute_source_port=54322 attribute_destination_address=10.0.5.10 attribute_destination_port=443 attribute_destination_nat64="null" attribute_device_id=d1 attribute_device_name=laptop1 attribute_user_id=u1 attribute_verdict=Drop attribute_reason=DropAllAfterPolicyEvaluation resource_telemetry.sdk.language=rust instrumentation_scope_name=audit',
+                        ],
+                        [
+                            "1712700002000000000",
+                            'severity=INFO attribute_audit_event=true attribute_protocol=tcp attribute_source_address=10.0.2.3 attribute_source_port=12345 attribute_destination_address=10.0.0.53 attribute_destination_port=53 attribute_destination_nat64="null" attribute_device_id=d2 attribute_device_name=desktop2 attribute_user_id=u2 attribute_verdict=Accept attribute_reason=PolicyMatched(abc-123) resource_telemetry.sdk.language=rust instrumentation_scope_name=audit',
+                        ],
+                    ],
+                }
+            ],
+        },
+    }
+
+    @pytest.mark.asyncio
+    async def test_query_verdict_logs(self, mock_client):
+        from bowtie_mcp.server import query_verdict_logs
+
+        mock_client.query_verdict_logs.return_value = self.LOKI_RESPONSE
+        result = json.loads(
+            await query_verdict_logs(start="7d", end="now")
+        )
+        assert result["count"] == 3
+        assert len(result["entries"]) == 3
+        mock_client.query_verdict_logs.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_query_verdict_logs_with_filters(self, mock_client):
+        from bowtie_mcp.server import query_verdict_logs
+
+        mock_client.query_verdict_logs.return_value = self.LOKI_RESPONSE
+        await query_verdict_logs(
+            start="24h", end="now", device_id="d1", verdict="Drop"
+        )
+        kwargs = mock_client.query_verdict_logs.call_args[1]
+        assert kwargs["device_id"] == "d1"
+        assert kwargs["verdict"] == "Drop"
+
+    @pytest.mark.asyncio
+    async def test_get_verdict_summary(self, mock_client):
+        from bowtie_mcp.server import get_verdict_summary
+
+        mock_client.query_verdict_logs.return_value = self.LOKI_RESPONSE
+        result = json.loads(
+            await get_verdict_summary(start="7d", end="now")
+        )
+        assert result["total_entries"] == 3
+        assert result["by_verdict"]["Drop"] == 2
+        assert result["by_verdict"]["Accept"] == 1
+        assert "10.0.5.10:443/tcp" in result["top_dropped_flows"]
+        assert result["top_dropped_flows"]["10.0.5.10:443/tcp"] == 2
+
+    @pytest.mark.asyncio
+    async def test_get_verdict_summary_empty(self, mock_client):
+        from bowtie_mcp.server import get_verdict_summary
+
+        mock_client.query_verdict_logs.return_value = {
+            "data": {"result": []}
+        }
+        result = json.loads(
+            await get_verdict_summary(start="7d", end="now")
+        )
+        assert result["total_entries"] == 0
+
+    @pytest.mark.asyncio
+    async def test_query_dns_logs(self, mock_client):
+        from bowtie_mcp.server import query_dns_logs
+
+        mock_client.query_dns_logs.return_value = {
+            "data": {
+                "result": [
+                    {
+                        "stream": {"audit_type": "dns_block"},
+                        "values": [
+                            ["1712700000000000000", 'domain=malware.example.com category=malware/callhome'],
+                        ],
+                    }
+                ]
+            }
+        }
+        result = json.loads(
+            await query_dns_logs(start="7d", end="now", domain="malware")
+        )
+        assert result["count"] == 1
