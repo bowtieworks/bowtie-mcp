@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
-import json
-import os
+from typing import Any
 
 import pytest
 
 from bowtie_mcp.client import ApiError
+
+
+def decode_result(result: Any) -> Any:
+    if isinstance(result, str):
+        import json
+
+        return json.loads(result)
+    return result
+
+
+def test_tool_metadata_exposes_structured_result_schema():
+    from bowtie_mcp.server import app
+
+    tool = next(tool for tool in app._tool_manager.list_tools() if tool.name == "list_users")
+    result_schema = tool.output_schema["properties"]["result"]
+
+    assert any(option["type"] == "object" for option in result_schema["anyOf"])
 
 
 class TestReadTools:
@@ -16,7 +32,7 @@ class TestReadTools:
         from bowtie_mcp.server import list_users
 
         mock_client.list_users.return_value = {"u1": {"id": "u1", "name": "Alice"}}
-        result = json.loads(await list_users())
+        result = decode_result(await list_users())
         assert "u1" in result
 
     @pytest.mark.asyncio
@@ -29,7 +45,7 @@ class TestReadTools:
                 "d2": {"id": "d2", "state": "accepted"},
             }
         }
-        result = json.loads(await list_devices(state="pending"))
+        result = decode_result(await list_devices(state="pending"))
         assert "d1" in result
         assert "d2" not in result
 
@@ -42,7 +58,7 @@ class TestReadTools:
             "resource_groups": {},
             "policies": {},
         }
-        result = json.loads(await get_policy())
+        result = decode_result(await get_policy())
         assert "policies" in result
 
     @pytest.mark.asyncio
@@ -50,7 +66,7 @@ class TestReadTools:
         from bowtie_mcp.server import health_check
 
         mock_client.health_check.return_value = {"status": "ok"}
-        result = json.loads(await health_check())
+        result = decode_result(await health_check())
         assert result["status"] == "ok"
 
     @pytest.mark.asyncio
@@ -60,7 +76,7 @@ class TestReadTools:
         mock_client.list_users.side_effect = ApiError(
             500, "server error", "/users"
         )
-        result = json.loads(await list_users())
+        result = decode_result(await list_users())
         assert result["tool"] == "list_users"
         assert result["status_code"] == 500
 
@@ -70,7 +86,7 @@ class TestWriteToolsConfirmation:
     async def test_write_returns_confirmation_when_not_confirmed(self, mock_client):
         from bowtie_mcp.server import upsert_user
 
-        result = json.loads(
+        result = decode_result(
             await upsert_user(name="Alice", email="alice@example.com", confirm=False)
         )
         assert result["confirmation_required"] is True
@@ -82,7 +98,7 @@ class TestWriteToolsConfirmation:
         from bowtie_mcp.server import upsert_user
 
         mock_client.upsert_user.return_value = {"id": "u1", "name": "Alice"}
-        result = json.loads(
+        result = decode_result(
             await upsert_user(name="Alice", email="alice@example.com", confirm=True)
         )
         assert result["name"] == "Alice"
@@ -97,7 +113,7 @@ class TestWriteToolsConfirmation:
         mock_client.change_device_state.return_value = {
             "devices": [{"id": "d1", "state": "accepted"}]
         }
-        result = json.loads(
+        result = decode_result(
             await change_device_state(device_ids=["d1"], state="accepted", confirm=False)
         )
         assert "confirmation_required" not in result
@@ -107,7 +123,7 @@ class TestWriteToolsConfirmation:
     async def test_change_device_state_validates_state(self, mock_client):
         from bowtie_mcp.server import change_device_state
 
-        result = json.loads(
+        result = decode_result(
             await change_device_state(
                 device_ids=["d1"], state="invalid", confirm=True
             )
@@ -122,7 +138,7 @@ class TestWriteToolsConfirmation:
             "id": "p1",
             "action": "Accept",
         }
-        result = json.loads(
+        result = decode_result(
             await upsert_policy(
                 source_predicate="AuthenticatedUser",
                 dest_group_id="rg1",
@@ -153,7 +169,7 @@ class TestWriteToolsConfirmation:
     async def test_upsert_policy_requires_source_value(self, mock_client):
         from bowtie_mcp.server import upsert_policy
 
-        result = json.loads(
+        result = decode_result(
             await upsert_policy(
                 source_predicate="InDeviceGroup",
                 dest_group_id="rg1",
@@ -168,7 +184,7 @@ class TestWriteToolsConfirmation:
         from bowtie_mcp.server import upsert_resource
 
         mock_client.upsert_resource.return_value = {"id": "r1"}
-        result = json.loads(
+        result = decode_result(
             await upsert_resource(
                 name="Web",
                 protocol="tcp",
@@ -204,7 +220,7 @@ class TestDnsTools:
     async def test_upsert_dns_config_confirmation(self, mock_client):
         from bowtie_mcp.server import upsert_dns_config
 
-        result = json.loads(
+        result = decode_result(
             await upsert_dns_config(
                 name="internal.example.com",
                 server_addrs=["10.0.0.53"],
@@ -220,7 +236,7 @@ class TestDnsTools:
         from bowtie_mcp.server import upsert_dns_config
 
         mock_client.upsert_dns_config.return_value = {"id": "dns1"}
-        result = json.loads(
+        result = decode_result(
             await upsert_dns_config(
                 name="internal.example.com",
                 server_addrs=["10.0.0.53", "10.0.0.54"],

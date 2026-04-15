@@ -11,6 +11,8 @@ from mcp.server.fastmcp import FastMCP
 
 from bowtie_mcp.client import ApiError, BowtieClient
 
+ToolResult = dict[str, Any] | list[Any]
+
 app = FastMCP(
     "Bowtie MCP Server",
     instructions="Manage your Bowtie zero-trust network cluster: policies, devices, DNS, users, and more.",
@@ -27,30 +29,26 @@ def _get_client() -> BowtieClient:
     return _client
 
 
-def _ok(data: Any) -> str:
-    return json.dumps(data, indent=2, default=str)
+def _ok(data: ToolResult) -> ToolResult:
+    return data
 
 
-def _error(tool: str, err: Exception) -> str:
+def _error(tool: str, err: Exception) -> dict[str, Any]:
     body: dict[str, Any] = {"tool": tool, "error": str(err)}
     if isinstance(err, ApiError):
         body["status_code"] = err.status_code
         body["detail"] = err.detail
-    return json.dumps(body, indent=2)
+    return body
 
 
-def _confirmation_required(tool: str, action: str, details: dict) -> str:
-    return json.dumps(
-        {
-            "confirmation_required": True,
-            "tool": tool,
-            "action": action,
-            "details": details,
-            "message": f"Call this tool again with confirm=true to execute: {action}",
-        },
-        indent=2,
-        default=str,
-    )
+def _confirmation_required(tool: str, action: str, details: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "confirmation_required": True,
+        "tool": tool,
+        "action": action,
+        "details": details,
+        "message": f"Call this tool again with confirm=true to execute: {action}",
+    }
 
 
 # ======================================================================
@@ -59,7 +57,7 @@ def _confirmation_required(tool: str, action: str, details: dict) -> str:
 
 
 @app.tool()
-async def health_check() -> str:
+async def health_check() -> ToolResult:
     """Check that the Bowtie controller is reachable and responding.
     Use this first to verify connectivity before running other tools."""
     try:
@@ -73,7 +71,7 @@ async def health_check() -> str:
 
 
 @app.tool()
-async def list_users() -> str:
+async def list_users() -> ToolResult:
     """List all users in the Bowtie organization.
     Returns a map of user IDs to user objects with name, email, role, and status.
     Use this to find user IDs needed by other tools."""
@@ -84,7 +82,7 @@ async def list_users() -> str:
 
 
 @app.tool()
-async def get_user(user_id: str) -> str:
+async def get_user(user_id: str) -> ToolResult:
     """Get details for a specific user by their UUID.
     Returns name, email, role (Owner/FullAdministrator/LimitedAdministrator/User), status, and permissions."""
     try:
@@ -94,7 +92,7 @@ async def get_user(user_id: str) -> str:
 
 
 @app.tool()
-async def get_current_user() -> str:
+async def get_current_user() -> ToolResult:
     """Get information about the currently authenticated user and their devices.
     Useful for verifying who you're acting as."""
     try:
@@ -107,7 +105,7 @@ async def get_current_user() -> str:
 
 
 @app.tool()
-async def list_user_groups() -> str:
+async def list_user_groups() -> ToolResult:
     """List all user groups. Returns a map of group IDs to group objects.
     User groups are used in policy source predicates to control which users can access resources."""
     try:
@@ -117,7 +115,7 @@ async def list_user_groups() -> str:
 
 
 @app.tool()
-async def get_user_group(group_id: str) -> str:
+async def get_user_group(group_id: str) -> ToolResult:
     """Get a user group by ID, including its name and metadata."""
     try:
         return _ok(await _get_client().get_user_group(group_id))
@@ -126,7 +124,7 @@ async def get_user_group(group_id: str) -> str:
 
 
 @app.tool()
-async def list_users_in_group(group_id: str) -> str:
+async def list_users_in_group(group_id: str) -> ToolResult:
     """List all user IDs that are members of a specific user group."""
     try:
         return _ok(await _get_client().list_users_in_group(group_id))
@@ -138,7 +136,7 @@ async def list_users_in_group(group_id: str) -> str:
 
 
 @app.tool()
-async def list_devices(state: str | None = None) -> str:
+async def list_devices(state: str | None = None) -> ToolResult:
     """List all devices in the Bowtie organization.
     Optionally filter by state: 'pending', 'accepted', or 'rejected'.
     Returns device name, OS, type, assigned user, connection status, and more.
@@ -158,7 +156,7 @@ async def list_devices(state: str | None = None) -> str:
 
 
 @app.tool()
-async def get_device(device_id: str) -> str:
+async def get_device(device_id: str) -> ToolResult:
     """Get full details for a specific device including its state, assigned user,
     OS, last seen time, IPv4/IPv6 addresses, and posture information."""
     try:
@@ -168,7 +166,7 @@ async def get_device(device_id: str) -> str:
 
 
 @app.tool()
-async def get_auth_decisions() -> str:
+async def get_auth_decisions() -> ToolResult:
     """List pre-configured device auth decisions (pre-approvals or pre-rejections by serial number).
     Useful for MDM workflows where devices are approved before they first check in."""
     try:
@@ -181,7 +179,7 @@ async def get_auth_decisions() -> str:
 
 
 @app.tool()
-async def get_device_group(group_id: str) -> str:
+async def get_device_group(group_id: str) -> ToolResult:
     """Get a device group by ID. Device groups are used in policy source predicates
     to control which devices can access resources."""
     try:
@@ -191,7 +189,7 @@ async def get_device_group(group_id: str) -> str:
 
 
 @app.tool()
-async def list_devices_in_group(group_id: str) -> str:
+async def list_devices_in_group(group_id: str) -> ToolResult:
     """List all devices that are members of a specific device group."""
     try:
         return _ok(await _get_client().list_devices_in_group(group_id))
@@ -203,7 +201,7 @@ async def list_devices_in_group(group_id: str) -> str:
 
 
 @app.tool()
-async def get_policy() -> str:
+async def get_policy() -> ToolResult:
     """Get the complete network policy document. Returns three sections:
     - resources: network objects (IP/CIDR/DNS targets with protocol and ports)
     - resource_groups: named groups of resources used as policy destinations
@@ -220,7 +218,7 @@ async def get_policy() -> str:
 
 
 @app.tool()
-async def list_dns_configs() -> str:
+async def list_dns_configs() -> ToolResult:
     """List all DNS configurations. DNS configs define how Bowtie resolves
     internal domain names, including upstream servers, DNS64 strategy,
     resolver strategy (overlay/exclusive/drop), and site bindings."""
@@ -231,7 +229,7 @@ async def list_dns_configs() -> str:
 
 
 @app.tool()
-async def get_dns_config(dns_id: str) -> str:
+async def get_dns_config(dns_id: str) -> ToolResult:
     """Get a specific DNS configuration by ID."""
     try:
         return _ok(await _get_client().get_dns_config(dns_id))
@@ -243,7 +241,7 @@ async def get_dns_config(dns_id: str) -> str:
 
 
 @app.tool()
-async def get_organization() -> str:
+async def get_organization() -> ToolResult:
     """Get organization details including name, domain, DNS configs, IPv6 ranges, and sites.
     This is the top-level view of your Bowtie deployment."""
     try:
@@ -253,7 +251,7 @@ async def get_organization() -> str:
 
 
 @app.tool()
-async def get_org_config() -> str:
+async def get_org_config() -> ToolResult:
     """Get the organization configuration including device approval settings,
     session timeouts, telemetry preferences, version strategy, and security settings."""
     try:
@@ -266,7 +264,7 @@ async def get_org_config() -> str:
 
 
 @app.tool()
-async def list_sites() -> str:
+async def list_sites() -> ToolResult:
     """List all sites. A site represents a physical or virtual location (e.g., an office or VPC)
     with its own controllers and routable IP ranges."""
     try:
@@ -276,7 +274,7 @@ async def list_sites() -> str:
 
 
 @app.tool()
-async def get_site(site_id: str) -> str:
+async def get_site(site_id: str) -> ToolResult:
     """Get details for a specific site by ID."""
     try:
         return _ok(await _get_client().get_site(site_id))
@@ -288,7 +286,7 @@ async def get_site(site_id: str) -> str:
 
 
 @app.tool()
-async def list_collections() -> str:
+async def list_collections() -> ToolResult:
     """List all collections. Collections are named groups of network locations (IPs, CIDRs, DNS names)
     that can be referenced by resources, route exclusions, and other objects."""
     try:
@@ -298,7 +296,7 @@ async def list_collections() -> str:
 
 
 @app.tool()
-async def get_collection(collection_id: str) -> str:
+async def get_collection(collection_id: str) -> ToolResult:
     """Get a collection by ID, including all its members (network locations)."""
     try:
         return _ok(await _get_client().get_collection(collection_id))
@@ -310,7 +308,7 @@ async def get_collection(collection_id: str) -> str:
 
 
 @app.tool()
-async def list_dns_block_lists() -> str:
+async def list_dns_block_lists() -> ToolResult:
     """List all DNS block lists configured in the organization.
     Block lists prevent resolution of known-bad domains."""
     try:
@@ -323,7 +321,7 @@ async def list_dns_block_lists() -> str:
 
 
 @app.tool()
-async def list_threat_categories() -> str:
+async def list_threat_categories() -> ToolResult:
     """List all threat intelligence categories with their enabled/disabled state.
     Categories group domains by threat type (malware, phishing, etc.)."""
     try:
@@ -333,7 +331,7 @@ async def list_threat_categories() -> str:
 
 
 @app.tool()
-async def categorize_domain(domain: str) -> str:
+async def categorize_domain(domain: str) -> ToolResult:
     """Check which threat categories a domain belongs to.
     Walks parent domains, so sub.malware.example.com also matches example.com."""
     try:
@@ -343,7 +341,7 @@ async def categorize_domain(domain: str) -> str:
 
 
 @app.tool()
-async def get_threat_feed_config() -> str:
+async def get_threat_feed_config() -> ToolResult:
     """Get the current threat feed configuration including sync interval,
     last sync status, and whether block event logging is enabled."""
     try:
@@ -356,7 +354,7 @@ async def get_threat_feed_config() -> str:
 
 
 @app.tool()
-async def list_api_keys() -> str:
+async def list_api_keys() -> ToolResult:
     """List all API keys in the organization. Shows key name, permissions,
     creation date, and last used info."""
     try:
@@ -369,7 +367,7 @@ async def list_api_keys() -> str:
 
 
 @app.tool()
-async def list_controllers() -> str:
+async def list_controllers() -> ToolResult:
     """List all controllers in the Bowtie cluster. Controllers are the
     enforcement points that handle WireGuard tunnels, DNS, and policy evaluation."""
     try:
@@ -379,7 +377,7 @@ async def list_controllers() -> str:
 
 
 @app.tool()
-async def get_controller(controller_id: str) -> str:
+async def get_controller(controller_id: str) -> ToolResult:
     """Get details for a specific controller including its status, public address,
     version, features, and site assignment."""
     try:
@@ -392,7 +390,7 @@ async def get_controller(controller_id: str) -> str:
 
 
 @app.tool()
-async def list_route_exclusions() -> str:
+async def list_route_exclusions() -> ToolResult:
     """List all route exclusions. Route exclusions define CIDRs that should
     bypass the Bowtie tunnel, typically for local network or split-tunnel scenarios."""
     try:
@@ -422,7 +420,7 @@ async def upsert_user(
     user_id: str | None = None,
     username: str | None = None,
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Create or update a user. Provide user_id to update an existing user.
 
     Args:
@@ -458,7 +456,7 @@ async def upsert_user(
 
 
 @app.tool()
-async def delete_user(user_id: str, confirm: bool = False) -> str:
+async def delete_user(user_id: str, confirm: bool = False) -> ToolResult:
     """Delete a user by ID. The user must be Disabled first.
     Only Owner or FullAdministrator roles can delete users.
 
@@ -485,7 +483,7 @@ async def upsert_user_group(
     group_id: str | None = None,
     description: str | None = None,
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Create or update a user group. User groups are referenced in policy source
     predicates to control access by group membership.
 
@@ -513,7 +511,7 @@ async def upsert_user_group(
 @app.tool()
 async def add_users_to_group(
     group_id: str, user_ids: list[str], confirm: bool = False
-) -> str:
+) -> ToolResult:
     """Add users to a user group by their UUIDs.
 
     Args:
@@ -537,7 +535,7 @@ async def add_users_to_group(
 @app.tool()
 async def remove_users_from_group(
     group_id: str, user_ids: list[str], confirm: bool = False
-) -> str:
+) -> ToolResult:
     """Remove users from a user group.
 
     Args:
@@ -559,7 +557,7 @@ async def remove_users_from_group(
 
 
 @app.tool()
-async def delete_user_group(group_id: str, confirm: bool = False) -> str:
+async def delete_user_group(group_id: str, confirm: bool = False) -> ToolResult:
     """Delete a user group. Any policies referencing this group will need to be updated.
 
     Args:
@@ -582,7 +580,7 @@ async def delete_user_group(group_id: str, confirm: bool = False) -> str:
 @app.tool()
 async def change_device_state(
     device_ids: list[str], state: str, confirm: bool = False
-) -> str:
+) -> ToolResult:
     """Approve or reject one or more devices. This is the primary way to onboard
     or block devices.
 
@@ -610,7 +608,7 @@ async def change_device_state(
 
 
 @app.tool()
-async def delete_device(device_id: str, confirm: bool = False) -> str:
+async def delete_device(device_id: str, confirm: bool = False) -> ToolResult:
     """Delete a rejected device for cleanup after decommissioning.
     The device must be in 'rejected' state first.
 
@@ -631,7 +629,7 @@ async def delete_device(device_id: str, confirm: bool = False) -> str:
 @app.tool()
 async def assign_device(
     device_id: str, user_id: str | None = None, confirm: bool = False
-) -> str:
+) -> ToolResult:
     """Assign or reassign a device to a user. This normally happens at authentication
     time, but admins can override it here.
 
@@ -655,7 +653,7 @@ async def assign_device(
 @app.tool()
 async def update_auth_decisions(
     decisions: list[dict], confirm: bool = False
-) -> str:
+) -> ToolResult:
     """Create or update device auth decisions (pre-approve or pre-reject by serial number).
     Each decision needs: serial (string), enforce_state ('accepted'/'rejected'/'retain').
 
@@ -686,7 +684,7 @@ async def upsert_device_group(
     group_id: str | None = None,
     description: str | None = None,
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Create or update a device group. Device groups are used in policy source
     predicates to control access by device membership.
 
@@ -714,7 +712,7 @@ async def upsert_device_group(
 @app.tool()
 async def add_devices_to_group(
     group_id: str, device_ids: list[str], confirm: bool = False
-) -> str:
+) -> ToolResult:
     """Add devices to a device group.
 
     Args:
@@ -739,7 +737,7 @@ async def add_devices_to_group(
 @app.tool()
 async def remove_devices_from_group(
     group_id: str, device_ids: list[str], confirm: bool = False
-) -> str:
+) -> ToolResult:
     """Remove devices from a device group.
 
     Args:
@@ -762,7 +760,7 @@ async def remove_devices_from_group(
 
 
 @app.tool()
-async def delete_device_group(group_id: str, confirm: bool = False) -> str:
+async def delete_device_group(group_id: str, confirm: bool = False) -> ToolResult:
     """Delete a device group. Policies referencing this group will need to be updated.
 
     Args:
@@ -793,7 +791,7 @@ async def upsert_resource(
     ports: list[int] | None = None,
     resource_id: str | None = None,
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Create or update a network resource. Resources define what can be accessed.
 
     Args:
@@ -845,7 +843,7 @@ async def upsert_resource_group(
     inherited_group_ids: list[str] | None = None,
     group_id: str | None = None,
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Create or update a resource group. Resource groups bundle resources together
     and are used as the 'destination' in policies.
 
@@ -881,7 +879,7 @@ async def upsert_policy(
     order: int | None = None,
     status: str | None = None,
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Create or update a network access policy. Policies are the core of Bowtie's
     zero-trust model — they determine who can access what.
 
@@ -953,7 +951,7 @@ async def upsert_policy(
 
 
 @app.tool()
-async def force_policy_refresh(confirm: bool = False) -> str:
+async def force_policy_refresh(confirm: bool = False) -> ToolResult:
     """Force an immediate refresh of the policy engine on the controller.
     Normally the engine updates on an interval; use this for testing after changes.
 
@@ -984,7 +982,7 @@ async def upsert_dns_config(
     dns_id: str | None = None,
     include_only_site_ids: list[str] | None = None,
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Create or update a DNS configuration for an internal domain.
 
     Args:
@@ -1031,7 +1029,7 @@ async def upsert_dns_config(
 
 
 @app.tool()
-async def delete_dns_config(dns_id: str, confirm: bool = False) -> str:
+async def delete_dns_config(dns_id: str, confirm: bool = False) -> ToolResult:
     """Delete a DNS configuration.
 
     Args:
@@ -1057,7 +1055,7 @@ async def upsert_collection(
     description: str = "",
     collection_id: str | None = None,
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Create or update a collection. Collections group network locations
     (IPs, CIDRs, DNS names) for use in resources and route exclusions.
 
@@ -1085,7 +1083,7 @@ async def add_collection_members(
     collection_id: str,
     members: list[dict],
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Add members (network locations) to a collection.
 
     Each member needs: name, comment, location ({type, value}).
@@ -1121,7 +1119,7 @@ async def remove_collection_members(
     collection_id: str,
     member_ids: list[str],
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Remove members from a collection by their IDs.
 
     Args:
@@ -1144,7 +1142,7 @@ async def remove_collection_members(
 
 
 @app.tool()
-async def delete_collection(collection_id: str, confirm: bool = False) -> str:
+async def delete_collection(collection_id: str, confirm: bool = False) -> ToolResult:
     """Delete a collection. Resources referencing it will need to be updated.
 
     Args:
@@ -1172,7 +1170,7 @@ async def upsert_dns_block_list(
     block_list_id: str | None = None,
     override_to_allow: str | None = None,
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Create or update a DNS block list.
 
     Args:
@@ -1205,7 +1203,7 @@ async def upsert_dns_block_list(
 @app.tool()
 async def delete_dns_block_list(
     block_list_id: str, confirm: bool = False
-) -> str:
+) -> ToolResult:
     """Delete a DNS block list.
 
     Args:
@@ -1230,7 +1228,7 @@ async def delete_dns_block_list(
 @app.tool()
 async def toggle_threat_category(
     source_path: str, enabled: bool, confirm: bool = False
-) -> str:
+) -> ToolResult:
     """Enable or disable a threat intelligence category by its source_path
     (e.g., "malware/callhome", "illegal/phishing").
 
@@ -1254,7 +1252,7 @@ async def toggle_threat_category(
 
 
 @app.tool()
-async def activate_threat_intel(confirm: bool = False) -> str:
+async def activate_threat_intel(confirm: bool = False) -> ToolResult:
     """Activate Bowtie Threat Intel. Creates category entities, enables the feed,
     and kicks off a background sync.
 
@@ -1272,7 +1270,7 @@ async def activate_threat_intel(confirm: bool = False) -> str:
 
 
 @app.tool()
-async def deactivate_threat_intel(confirm: bool = False) -> str:
+async def deactivate_threat_intel(confirm: bool = False) -> ToolResult:
     """Deactivate Bowtie Threat Intel.
 
     Args:
@@ -1297,7 +1295,7 @@ async def upsert_route_exclusion(
     collection_id: str,
     exclusion_id: str | None = None,
     confirm: bool = False,
-) -> str:
+) -> ToolResult:
     """Create or update a route exclusion. Route exclusions define CIDRs
     (via a collection) that bypass the Bowtie tunnel.
 
@@ -1323,7 +1321,7 @@ async def upsert_route_exclusion(
 @app.tool()
 async def delete_route_exclusion(
     exclusion_id: str, confirm: bool = False
-) -> str:
+) -> ToolResult:
     """Delete a route exclusion.
 
     Args:
