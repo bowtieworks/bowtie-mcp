@@ -34,12 +34,20 @@ export BOWTIE_PASSWORD="your-password"
 python -m bowtie_mcp
 ```
 
+To test an HTTP transport locally instead of stdio:
+
+```bash
+python -m bowtie_mcp --transport streamable-http --port 8080
+```
+
+Use `--transport sse` if you specifically need the legacy SSE transport.
+
 ## Project Structure
 
 ```
 src/bowtie_mcp/
 ├── __init__.py       # Package metadata
-├── __main__.py       # CLI entry point (stdio + SSE transport)
+├── __main__.py       # CLI entry point (stdio + HTTP transports)
 ├── client.py         # Async HTTP client wrapping the Bowtie REST API
 └── server.py         # MCP server with tool definitions and prompts
 ```
@@ -51,7 +59,7 @@ src/bowtie_mcp/
 
 1. Add the HTTP method to `client.py`
 2. Add the tool handler to `server.py` with the `@app.tool()` decorator
-3. For write tools, use the `_needs_confirmation()` / `_confirmation_required()` pattern
+3. For write tools, use the `_confirmation_required()` pattern
 4. Add tests in `tests/test_client.py` and `tests/test_server.py`
 
 ## Code Style

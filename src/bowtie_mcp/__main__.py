@@ -1,16 +1,18 @@
 """CLI entry point for the Bowtie MCP server."""
 
+from __future__ import annotations
+
 import argparse
-import sys
+from collections.abc import Sequence
 
 from bowtie_mcp.server import app
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Bowtie MCP Server")
     parser.add_argument(
         "--transport",
-        choices=["stdio", "sse"],
+        choices=["stdio", "sse", "streamable-http"],
         default="stdio",
         help="MCP transport to use (default: stdio)",
     )
@@ -18,14 +20,16 @@ def main() -> None:
         "--port",
         type=int,
         default=8080,
-        help="Port for SSE transport (default: 8080)",
+        help="Port for HTTP transports (default: 8080)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    if args.transport == "sse":
-        app.run(transport="sse", port=args.port)
-    else:
+    if args.transport == "stdio":
         app.run(transport="stdio")
+        return
+
+    app.settings.port = args.port
+    app.run(transport=args.transport)
 
 
 if __name__ == "__main__":

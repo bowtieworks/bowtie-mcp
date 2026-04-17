@@ -71,6 +71,24 @@ Add to `.cursor/mcp.json` or your editor's MCP config:
 }
 ```
 
+### HTTP Streaming Mode
+
+For clients that connect over HTTP instead of spawning a local stdio process, start the server in one of FastMCP's HTTP transports:
+
+```bash
+uvx bowtie-mcp --transport streamable-http --port 8080
+```
+
+This binds to `127.0.0.1:8080` and exposes the recommended Streamable HTTP endpoint at `http://127.0.0.1:8080/mcp`.
+
+Legacy SSE is also available:
+
+```bash
+uvx bowtie-mcp --transport sse --port 8080
+```
+
+The SSE endpoint is `http://127.0.0.1:8080/sse`. During the handshake, FastMCP tells the client to post subsequent messages to the matching `http://127.0.0.1:8080/messages/` endpoint.
+
 ## Authentication
 
 The server authenticates to your Bowtie controller using admin credentials — the same approach used by the [Bowtie Terraform provider](https://registry.terraform.io/providers/bowtieworks/bowtie/latest).
@@ -111,6 +129,8 @@ Ask your LLM things like:
 ### Write Confirmation
 
 All write tools use a two-step confirmation pattern. The first call returns a preview of the planned change. Call again with `confirm=true` to execute. This prevents accidental mutations.
+
+Tool responses are returned as structured JSON-compatible objects rather than pre-serialized JSON strings, so MCP clients can inspect fields directly.
 
 Set `BOWTIE_MCP_SKIP_CONFIRMATION=true` to bypass this for automation or CI workflows.
 

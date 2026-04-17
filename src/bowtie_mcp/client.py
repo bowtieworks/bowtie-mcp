@@ -350,10 +350,10 @@ class BowtieClient:
     # ------------------------------------------------------------------
 
     async def list_dns_block_lists(self) -> dict:
-        return await self._request("GET", "/dns_block_list/")
+        return await self._request("GET", "/dns_block_list")
 
     async def upsert_dns_block_list(self, data: dict) -> dict:
-        return await self._request("POST", "/dns_block_list/", json=data)
+        return await self._request("POST", "/dns_block_list", json=data)
 
     async def delete_dns_block_list(self, block_list_id: str) -> dict:
         return await self._request("DELETE", f"/dns_block_list/{block_list_id}")
@@ -363,7 +363,7 @@ class BowtieClient:
     # ------------------------------------------------------------------
 
     async def list_threat_categories(self) -> list:
-        return await self._request("GET", "/threat_categories/")
+        return await self._request("GET", "/threat_categories")
 
     async def activate_threat_intel(self) -> list:
         return await self._request("POST", "/threat_categories/activate")
@@ -396,10 +396,10 @@ class BowtieClient:
     # ------------------------------------------------------------------
 
     async def list_api_keys(self) -> dict:
-        return await self._request("GET", "/api_keys/")
+        return await self._request("GET", "/api_keys")
 
     async def upsert_api_key(self, data: dict) -> dict:
-        return await self._request("POST", "/api_keys/", json=data)
+        return await self._request("POST", "/api_keys", json=data)
 
     async def delete_api_key(self, api_key_id: str) -> dict:
         return await self._request("DELETE", f"/api_keys/{api_key_id}")
