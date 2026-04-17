@@ -429,7 +429,7 @@ async def _check_verdict_logging_status() -> dict:
 
 
 @app.tool()
-async def get_verdict_logging_status() -> str:
+async def get_verdict_logging_status() -> ToolResult:
     """Check which controllers have policy verdict logging enabled.
     Verdict logging must be enabled per-controller before verdict logs
     will appear in queries. Returns the status of each controller.
@@ -493,7 +493,7 @@ async def query_verdict_logs(
     destination: str | None = None,
     protocol: str | None = None,
     limit: int = 500,
-) -> str:
+) -> ToolResult:
     """Query policy verdict logs over a time range. Returns raw firewall decisions
     showing what traffic was accepted, rejected, or dropped and why.
 
@@ -547,7 +547,7 @@ async def get_verdict_summary(
     start: str,
     end: str,
     limit: int = 5000,
-) -> str:
+) -> ToolResult:
     """Get an aggregated summary of policy verdicts over a time range.
     Groups traffic by destination, verdict, device, and user to identify patterns.
 
@@ -660,7 +660,7 @@ async def query_dns_logs(
     device_id: str | None = None,
     category: str | None = None,
     limit: int = 500,
-) -> str:
+) -> ToolResult:
     """Query DNS block/audit logs over a time range. Shows DNS queries that were
     blocked by threat categories or block lists, including the domain, category,
     and which device/user triggered it.

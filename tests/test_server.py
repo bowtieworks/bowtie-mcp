@@ -283,7 +283,7 @@ class TestLogQueryTools:
         from bowtie_mcp.server import query_verdict_logs
 
         mock_client.query_verdict_logs.return_value = self.LOKI_RESPONSE
-        result = json.loads(
+        result = decode_result(
             await query_verdict_logs(start="7d", end="now")
         )
         assert result["count"] == 3
@@ -307,7 +307,7 @@ class TestLogQueryTools:
         from bowtie_mcp.server import get_verdict_summary
 
         mock_client.query_verdict_logs.return_value = self.LOKI_RESPONSE
-        result = json.loads(
+        result = decode_result(
             await get_verdict_summary(start="7d", end="now")
         )
         assert result["total_entries"] == 3
@@ -323,7 +323,7 @@ class TestLogQueryTools:
         mock_client.query_verdict_logs.return_value = {
             "data": {"result": []}
         }
-        result = json.loads(
+        result = decode_result(
             await get_verdict_summary(start="7d", end="now")
         )
         assert result["total_entries"] == 0
@@ -344,7 +344,7 @@ class TestLogQueryTools:
                 ]
             }
         }
-        result = json.loads(
+        result = decode_result(
             await query_dns_logs(start="7d", end="now", domain="malware")
         )
         assert result["count"] == 1
@@ -371,7 +371,7 @@ class TestLogQueryTools:
                 },
             ]
         }
-        result = json.loads(await get_verdict_logging_status())
+        result = decode_result(await get_verdict_logging_status())
         assert result["total_controllers"] == 2
         assert result["logging_enabled_count"] == 1
         assert result["controllers"][0]["id"] == "c1"
