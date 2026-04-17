@@ -348,3 +348,31 @@ class TestLogQueryTools:
             await query_dns_logs(start="7d", end="now", domain="malware")
         )
         assert result["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_get_verdict_logging_status(self, mock_client):
+        from bowtie_mcp.server import get_verdict_logging_status
+
+        mock_client.list_controllers.return_value = {
+            "controllers": [
+                {
+                    "id": "c1",
+                    "public_address": "1.2.3.4",
+                    "track_policy_verdict_logs": True,
+                    "track_policy_verdict_metrics": False,
+                    "status": "active",
+                },
+                {
+                    "id": "c2",
+                    "https_endpoint": "https://c2.example",
+                    "track_policy_verdict_logs": False,
+                    "track_policy_verdict_metrics": False,
+                    "status": "active",
+                },
+            ]
+        }
+        result = json.loads(await get_verdict_logging_status())
+        assert result["total_controllers"] == 2
+        assert result["logging_enabled_count"] == 1
+        assert result["controllers"][0]["id"] == "c1"
+        assert result["controllers"][1]["public_address"] == "https://c2.example"

@@ -407,7 +407,10 @@ async def list_route_exclusions() -> ToolResult:
 async def _check_verdict_logging_status() -> dict:
     """Check which controllers have verdict logging enabled.
     Returns a summary with controller names and their logging status."""
-    controllers = await _get_client().list_controllers()
+    response = await _get_client().list_controllers()
+    controllers = (
+        response.get("controllers", []) if isinstance(response, dict) else response
+    )
     status = []
     for c in controllers:
         status.append({

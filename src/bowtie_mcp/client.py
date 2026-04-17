@@ -411,7 +411,7 @@ class BowtieClient:
     # Controllers
     # ------------------------------------------------------------------
 
-    async def list_controllers(self) -> list:
+    async def list_controllers(self) -> dict:
         return await self._request("GET", "/organization/controller")
 
     async def get_controller(self, controller_id: str) -> dict:
