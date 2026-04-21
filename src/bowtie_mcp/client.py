@@ -411,7 +411,7 @@ class BowtieClient:
     # Controllers
     # ------------------------------------------------------------------
 
-    async def list_controllers(self) -> list:
+    async def list_controllers(self) -> dict:
         return await self._request("GET", "/organization/controller")
 
     async def get_controller(self, controller_id: str) -> dict:
@@ -431,6 +431,112 @@ class BowtieClient:
 
     async def delete_route_exclusion(self, exclusion_id: str) -> dict:
         return await self._request("DELETE", f"/route_exclusion/{exclusion_id}")
+
+    # ------------------------------------------------------------------
+    # Loki Log Queries
+    # ------------------------------------------------------------------
+
+    async def _loki_query_range(
+        self,
+        query: str,
+        start: str,
+        end: str,
+        limit: int = 1000,
+    ) -> dict:
+        """Run a LogQL range query against the Loki federation endpoint.
+
+        Args:
+            query: LogQL query string.
+            start: RFC3339 or Unix epoch start time.
+            end: RFC3339 or Unix epoch end time.
+            limit: Max number of log lines to return.
+        """
+        client = await self._ensure_client()
+        url = f"{API_PREFIX}/loki_federation/api/v1/query_range"
+        params = {
+            "query": query,
+            "start": start,
+            "end": end,
+            "limit": str(limit),
+        }
+        resp = await client.get(url, params=params)
+
+        if resp.status_code == 401:
+            await self._re_authenticate()
+            client = await self._ensure_client()
+            resp = await client.get(url, params=params)
+
+        if resp.status_code >= 400:
+            try:
+                detail = resp.text
+            except Exception:
+                detail = resp.reason_phrase or "Unknown error"
+            raise ApiError(resp.status_code, detail, url)
+
+        return resp.json()
+
+    async def query_verdict_logs(
+        self,
+        start: str,
+        end: str,
+        *,
+        device_id: str | None = None,
+        user_id: str | None = None,
+        verdict: str | None = None,
+        destination: str | None = None,
+        protocol: str | None = None,
+        limit: int = 1000,
+    ) -> dict:
+        """Query policy verdict logs from Loki.
+
+        Verdict logs are written by the controller's nfqueue handler when
+        track_policy_verdict_logs is enabled. Each entry contains protocol,
+        source/destination addresses and ports, device, user, verdict, and
+        the policy match reason.
+        """
+        # Verdict logs are indexed under audit_type="packet_queue" in Loki.
+        # Fields in the log line are prefixed with "attribute_" (via OTLP).
+        selector = '{audit_type="packet_queue"}'
+        filters = ""
+        if device_id:
+            filters += f' |= "attribute_device_id={device_id}"'
+        if user_id:
+            filters += f' |= "attribute_user_id={user_id}"'
+        if verdict:
+            filters += f' |= "attribute_verdict={verdict}"'
+        if destination:
+            filters += f' |= "{destination}"'
+        if protocol:
+            filters += f' |= "attribute_protocol={protocol}"'
+
+        query = selector + filters
+        return await self._loki_query_range(query, start, end, limit)
+
+    async def query_dns_logs(
+        self,
+        start: str,
+        end: str,
+        *,
+        domain: str | None = None,
+        device_id: str | None = None,
+        category: str | None = None,
+        limit: int = 1000,
+    ) -> dict:
+        """Query DNS audit logs from Loki.
+
+        DNS audit logs are pushed via OTLP from clients and contain
+        domain, query type, threat category (if blocked), and device/user info.
+        """
+        filters = ""
+        if domain:
+            filters += f' |= "{domain}"'
+        if device_id:
+            filters += f' |= "{device_id}"'
+        if category:
+            filters += f' |= "{category}"'
+
+        query = '{audit_type="dns_block"}' + filters
+        return await self._loki_query_range(query, start, end, limit)
 
     # ------------------------------------------------------------------
     # Lifecycle
